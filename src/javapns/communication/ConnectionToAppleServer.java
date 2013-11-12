@@ -24,7 +24,7 @@ public abstract class ConnectionToAppleServer {
 	protected static final Logger logger = Logger.getLogger(ConnectionToAppleServer.class);
 
 	/* The algorithm used by KeyManagerFactory */
-	private static final String ALGORITHM = ((Security.getProperty("ssl.KeyManagerFactory.algorithm") == null) ? "sunx509" : Security.getProperty("ssl.KeyManagerFactory.algorithm"));
+	private static final String ALGORITHM = ((KeyManagerFactory.getDefaultAlgorithm() == null) ? "sunx509" : KeyManagerFactory.getDefaultAlgorithm());
 
 	/* The protocol used to create the SSLSocket */
 	private static final String PROTOCOL = "TLS";
@@ -191,7 +191,18 @@ public abstract class ConnectionToAppleServer {
 
 		OutputStream out = tunnel.getOutputStream();
 
-		String msg = "CONNECT " + host + ":" + port + " HTTP/1.0\n" + "User-Agent: BoardPad Server" + "\r\n\r\n";
+		StringBuilder header = new StringBuilder();
+		header.append("CONNECT " + host + ":" + port + " HTTP/1.0\n");
+		header.append("User-Agent: BoardPad Server\n");
+		String authorization = ProxyManager.getProxyAuthorization(server);
+		if (authorization != null && authorization.length() > 0) {
+			header.append("Proxy-Authorization: " + authorization + "\n");
+		}
+
+		header.deleteCharAt(header.lastIndexOf("\n"));
+		header.append("\r\n\r\n");
+
+		String msg = header.toString();//"CONNECT " + host + ":" + port + " HTTP/1.0\n" + "User-Agent: BoardPad Server" + "\r\n\r\n";
 		byte b[] = null;
 		try { //We really do want ASCII7 -- the http protocol doesn't change with locale.
 			b = msg.getBytes("ASCII7");
@@ -238,7 +249,7 @@ public abstract class ConnectionToAppleServer {
 		}
 
 		/* We check for Connection Established because our proxy returns HTTP/1.1 instead of 1.0 */
-		if (replyStr.toLowerCase().indexOf("200 connection established") == -1) {
+		if (replyStr.toLowerCase().indexOf("200") == -1) {
 			throw new IOException("Unable to tunnel through. Proxy returns \"" + replyStr + "\"");
 		}
 

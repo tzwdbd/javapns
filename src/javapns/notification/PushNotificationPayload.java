@@ -2,9 +2,9 @@ package javapns.notification;
 
 import java.util.*;
 
+import javapns.json.*;
 import javapns.notification.exceptions.*;
 
-import org.json.*;
 
 /**
  * A payload compatible with the Apple Push Notification Service.
@@ -333,6 +333,17 @@ public class PushNotificationPayload extends Payload {
 	 */
 	public void addCustomAlertLocArgs(List args) throws JSONException {
 		put("loc-args", args, getOrAddCustomAlert(), false);
+	}
+
+
+	/**
+	 * Create a custom alert (if none exist) and add a launch-image parameter.
+	 * 
+	 * @param launchImage
+	 * @throws JSONException if the custom alert cannot be added because a simple alert already exists
+	 */
+	public void addCustomAlertLaunchImage(String launchImage) throws JSONException {
+		put("launch-image", launchImage, getOrAddCustomAlert(), false);
 	}
 
 

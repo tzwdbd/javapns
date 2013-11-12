@@ -63,6 +63,8 @@ public class NotificationThread implements Runnable, PushQueue {
 	private PushedNotifications notifications = new PushedNotifications();
 	private MODE mode = MODE.LIST;
 	private boolean busy = false;
+	private Object lockForPushedNotifications = new Object();
+	private boolean newNotificationsAdded = false;
 
 	/* Single payload to multiple devices */
 	private Payload payload;
@@ -226,7 +228,10 @@ public class NotificationThread implements Runnable, PushQueue {
 				}
 				int message = newMessageIdentifier();
 				PushedNotification notification = notificationManager.sendNotification(device, payload, false, message);
-				notifications.add(notification);
+				synchronized (lockForPushedNotifications) {
+					notifications.add(notification);
+					newNotificationsAdded = true;
+				}
 				try {
 					if (sleepBetweenNotifications > 0) Thread.sleep(sleepBetweenNotifications);
 				} catch (InterruptedException e) {
@@ -264,7 +269,10 @@ public class NotificationThread implements Runnable, PushQueue {
 					notificationsPushed++;
 					int messageId = newMessageIdentifier();
 					PushedNotification notification = notificationManager.sendNotification(message.getDevice(), message.getPayload(), false, messageId);
-					notifications.add(notification);
+					synchronized (lockForPushedNotifications) {
+						notifications.add(notification);
+						newNotificationsAdded = true;
+					}
 					try {
 						if (sleepBetweenNotifications > 0) Thread.sleep(sleepBetweenNotifications);
 					} catch (InterruptedException e) {
@@ -445,19 +453,35 @@ public class NotificationThread implements Runnable, PushQueue {
 
 
 	/**
-	 * Returns list of all notifications pushed by this thread (successful or not).
+	 * Returns a list of all notifications pushed by this thread (successful or not).
 	 * 
+	 * IMPORTANT: Invoking this method on a QUEUE causes a connection restart to get an opportunity
+	 * to receive error-response packets (if any) which might affect the result of this method.
+	 * 
+	 * @param clearList indicate if the internal list of pushed notifications should be emptied (recommended)
 	 * @return a list of pushed notifications
 	 */
-	public PushedNotifications getPushedNotifications() {
-		return notifications;
+	public PushedNotifications getPushedNotifications(boolean clearList) {
+		synchronized (lockForPushedNotifications) {
+			if (notifications.size()==0 || !newNotificationsAdded) return new PushedNotifications();
+			restartQueue();
+			PushedNotifications all = new PushedNotifications(notifications.size());
+			all.addAll(notifications);
+			if (clearList) {
+				notifications.clear();
+				newNotificationsAdded = false;
+			}
+			return all;
+		}
 	}
 
 
 	/**
 	 * Clear the internal list of PushedNotification objects.
 	 * You should invoke this method once you no longer need the list of PushedNotification objects so that memory can be reclaimed.
+	 * @deprecated Not thead-safe.  use getPushedNotifications(true) instead.
 	 */
+	@Deprecated
 	public void clearPushedNotifications() {
 		notifications.clear();
 	}
@@ -467,9 +491,11 @@ public class NotificationThread implements Runnable, PushQueue {
 	 * Returns list of all notifications that this thread attempted to push but that failed.
 	 * 
 	 * @return a list of failed notifications
+	 * @deprecated Not thead-safe.  use getPushedNotifications(true).getFailedNotifications() instead.
 	 */
+	@Deprecated
 	public PushedNotifications getFailedNotifications() {
-		return getPushedNotifications().getFailedNotifications();
+		return getPushedNotifications(false).getFailedNotifications();
 	}
 
 
@@ -477,9 +503,11 @@ public class NotificationThread implements Runnable, PushQueue {
 	 * Returns list of all notifications that this thread attempted to push and succeeded.
 	 * 
 	 * @return a list of failed notifications
+	 * @deprecated Not thead-safe.  use getPushedNotifications(true).getSuccessfulNotifications() instead.
 	 */
+	@Deprecated
 	public PushedNotifications getSuccessfulNotifications() {
-		return getPushedNotifications().getSuccessfulNotifications();
+		return getPushedNotifications(false).getSuccessfulNotifications();
 	}
 
 
@@ -513,9 +541,14 @@ public class NotificationThread implements Runnable, PushQueue {
 
 	/**
 	 * If this thread experienced a critical exception (communication error, keystore issue, etc.), this method returns the exception.
+	 * 
+	 * IMPORTANT: Invoking this method on a QUEUE causes a connection restart to get an opportunity
+	 * to receive error-response packets (if any) which might affect the result of this method.
+	 * 
 	 * @return a critical exception, if one occurred in this thread
 	 */
 	public Exception getCriticalException() {
+		restartQueue();
 		return exception;
 	}
 
@@ -526,9 +559,21 @@ public class NotificationThread implements Runnable, PushQueue {
 	 * @return a list containing a critical exception, if any occurred
 	 */
 	public List<Exception> getCriticalExceptions() {
-		List<Exception> exceptions = new Vector<Exception>(exception == null ? 0 : 1);
-		if (exception != null) exceptions.add(exception);
+		Exception theException = getCriticalException();
+		List<Exception> exceptions = new Vector<Exception>(theException == null ? 0 : 1);
+		if (theException != null) exceptions.add(theException);
 		return exceptions;
+	}
+
+
+	private void restartQueue() {
+		if (mode != MODE.QUEUE) return;
+		try {
+			if (listener != null) listener.eventConnectionRestarted(this);
+			notificationManager.restartConnection(server);
+		} catch (Exception e) {
+			if (exception == null) exception = e;
+		}
 	}
 
 }
